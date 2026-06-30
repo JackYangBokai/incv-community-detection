@@ -90,3 +90,105 @@ SBM.prob <- function(cluster, k, A, restricted = TRUE) {
   }
   list(p.matrix = p.matrix, negloglike = negloglike)
 }
+
+#' Spectral clustering for a Degree-corrected Stochastic Block Model
+#'
+#' Performs spectral clustering on an adjacency matrix by computing the top
+#' \code{k} singular vectors and applying kGmedian via \code{Gmedian::kGmedian}.
+#'
+#' @param A Symmetric adjacency matrix (n x n, binary or weighted).
+#' @param k Number of clusters (default 2).
+#' @return A list with:
+#'   \item{label_hat}{An integer vector of length n.}
+#'   \item{theta_hat}{A vector with length n, estimator of normalized degree parameter.}
+#' @export
+DCSBM.spectral.clustering <- function(A, k=2){
+  svd.k <- svds(A, k = k)
+  U_k <- svd.k$u  
+  D_k <- diag(svd.k$d)      
+  V_k <- svd.k$v      
+  
+  theta_hat <- sqrt(rowSums(U_k^2))
+  normalized_U <- U_k / theta_hat  
+  
+  normalized_U <- as.matrix(normalized_U)
+  
+  if (k == 1) {
+    label_hat <- rep(1, nrow(normalized_U))
+  } else {
+    normalized_U <- as.matrix(normalized_U)
+    
+    kmedian_result <- kGmedian(normalized_U, ncenters = k, nstart = 25, iter.max = 100)
+    label_hat <- kmedian_result$cluster
+  }
+  
+  return(list(label_hat = label_hat, theta_hat = theta_hat))
+}
+
+#' Estimate DESBM connection probabilities
+#'
+#' Given a clustering and adjacency matrix, estimates the block probability
+#' matrix of the DCSBM model.
+#'
+#' @param cluster Integer vector of cluster labels.
+#' @param k Number of clusters.
+#' @param A Adjacency matrix corresponding to the nodes in \code{cluster}.
+#' @param eps Gap that ensures the probability is less than 1.
+#' @return A list with \code{B.matrix}, a k x k estimated block probability matrix.
+#' @export
+DCSBM.prob <- function(cluster, k, A, theta_hat, eps = 1e-8) {
+  n <- nrow(A)
+  
+  if (ncol(A) != n) {
+    stop("A must be a square adjacency matrix.")
+  }
+  if (length(cluster) != n) {
+    stop("length(cluster) must equal nrow(A).")
+  }
+  if (length(theta_hat) != n) {
+    stop("length(theta_hat) must equal nrow(A).")
+  }
+  
+  B.matrix <- matrix(0, nrow = k, ncol = k)
+  
+  idx <- which(upper.tri(A), arr.ind = TRUE)
+  ii <- idx[, 1]
+  jj <- idx[, 2]
+  
+  A.vec <- A[cbind(ii, jj)]
+  theta.prod <- theta_hat[ii] * theta_hat[jj]
+  
+  for (a in 1:k) {
+    for (b in a:k) {
+      
+      if (a == b) {
+        sel <- (cluster[ii] == a) & (cluster[jj] == a)
+      } else {
+        sel <- ((cluster[ii] == a) & (cluster[jj] == b)) |
+          ((cluster[ii] == b) & (cluster[jj] == a))
+      }
+      
+      numerator <- sum(A.vec[sel])
+      denominator <- sum(theta.prod[sel])
+      
+      if (denominator <= 0 || sum(sel) == 0) {
+        B.hat <- 0
+      } else {
+        B.hat <- numerator / denominator
+      }
+      
+      if (sum(sel) > 0) {
+        max.theta.prod <- max(theta.prod[sel])
+        if (max.theta.prod > 0) {
+          B.upper <- (1 - eps) / max.theta.prod
+          B.hat <- min(B.hat, B.upper)
+        }
+      }
+      
+      B.matrix[a, b] <- B.hat
+      B.matrix[b, a] <- B.hat
+    }
+  }
+  
+  return(list(B.matrix = B.matrix))
+}
