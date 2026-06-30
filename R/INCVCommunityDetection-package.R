@@ -6,8 +6,9 @@
 #'
 #' @section Main functions:
 #' \describe{
-#'   \item{\code{\link{nscv.f.fold}}}{F-fold node-split cross-validation (INCV).}
-#'   \item{\code{\link{nscv.random.split}}}{Random-split cross-validation (INCV).}
+#'   \item{\code{\link{Incv.f.fold}}}{F-fold node-split cross-validation (INCV).}
+#'   \item{\code{\link{Incv.random.split}}}{Random-split cross-validation (INCV).}
+#'   \item{\code{\link{Incv.f.fold.dcsbm}}}{F-fold node-split cross-validation (INCV) for DCSBM.}
 #'   \item{\code{\link{croissant.blockmodel}}}{CROISSANT for SBM/DCBM selection.}
 #'   \item{\code{\link{ECV.for.blockmodel}}}{Edge cross-validation.}
 #'   \item{\code{\link{NCV.for.blockmodel}}}{Node cross-validation.}
@@ -21,6 +22,7 @@
 #' @import Matrix
 #' @importFrom RSpectra svds
 #' @importFrom ClusterR KMeans_rcpp
+#' @importFrom Gmedian kGmedian
 #' @importFrom irlba irlba partial_eigen
 #' @importFrom parallel mclapply
 #' @importFrom cluster pam
