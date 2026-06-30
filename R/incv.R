@@ -27,7 +27,7 @@
 #' net <- community.sim(k = 3, n = 150, n1 = 50, p = 0.5, q = 0.1)
 #' result <- nscv.f.fold(net$adjacency, k.vec = 2:5, f = 5)
 #' result$k.loss
-nscv.f.fold <- function(A, k.vec = 2:6, restricted = TRUE, f = 10,
+Incv.f.fold <- function(A, k.vec = 2:6, restricted = TRUE, f = 10,
                         method = "affinity", p.est.type = 3) {
   n <- ncol(A)
   cv.loss <- rep(0, length(k.vec))
@@ -150,7 +150,7 @@ nscv.f.fold <- function(A, k.vec = 2:6, restricted = TRUE, f = 10,
 #' Performs repeated random-split node-level cross-validation. At each
 #' iteration a random fraction \code{split} of nodes is used for training.
 #'
-#' @inheritParams nscv.f.fold
+#' @inheritParams Incv.f.fold
 #' @param split Fraction of nodes used for training (default 0.66).
 #' @param ite Number of random split iterations (default 100).
 #' @return A list with:
@@ -159,7 +159,7 @@ nscv.f.fold <- function(A, k.vec = 2:6, restricted = TRUE, f = 10,
 #'   \item{cv.loss}{Average CV negative log-likelihood for each \code{k}.}
 #'   \item{cv.mse}{Average CV MSE for each \code{k}.}
 #' @export
-nscv.random.split <- function(A, k.vec = 2:6, restricted = TRUE,
+Incv.random.split <- function(A, k.vec = 2:6, restricted = TRUE,
                               split = 0.66, ite = 100,
                               method = "affinity", p.est.type = 3) {
   n <- ncol(A)
@@ -271,4 +271,117 @@ nscv.random.split <- function(A, k.vec = 2:6, restricted = TRUE,
   }
   list(k.loss = k.loss, k.mse = k.mse,
        cv.loss = cv.loss, cv.mse = cv.mse)
+}
+
+#' Inductive Node-Splitting Cross-Validation with f-fold splitting for DCSBM
+#'
+#' Performs f-fold node-split cross-validation to select the number of
+#' communities \code{k} in a Degree-corrected Stochastic Block Model. Nodes 
+#' are randomly partitioned into \code{f} folds; for each fold the held-out 
+#' nodes are assigned to communities via the training-set spectral clustering, 
+#' and the held-out negative log-likelihood and MSE are computed.
+#'
+#' @param A Symmetric adjacency matrix (n x n, binary).
+#' @param k.vec Integer vector of candidate community numbers (default 2:6).
+#' @param f Number of folds (default 10).
+#' @return A list with:
+#'   \item{k.loss}{Selected \code{k} that minimises CV negative log-likelihood.}
+#'   \item{k.mse}{Selected \code{k} that minimises CV MSE.}
+#'   \item{cv.loss}{Average CV negative log-likelihood for each \code{k}.}
+#'   \item{cv.mse}{Average CV MSE for each \code{k}.}
+#' @export
+Incv.f.fold.dcsbm <- function(A, k.vec = 2:6, f=10) {
+  n <- ncol(A)
+  cv.loss <- rep(0, length(k.vec))
+  loss.f <- matrix(0, nrow=f, ncol=length(k.vec))
+  mse.f  <- matrix(0, nrow=f, ncol=length(k.vec))
+  node <- 1:n
+  
+  f.group <- rep(1:f, floor(n/f))
+  if ((n%%f) != 0) f.group <- c(f.group, 1:(n%%f))
+  f.group <- sample(f.group) # Get a random assignment of nodes to the f folds.
+  
+  for(i in 1:f) {
+    
+    # Split training and testing set
+    training <- node[f.group != i]
+    testing <- node[f.group == i]  
+    
+    # Split the adjacency matrix
+    A11 <- A[training, training]
+    A12 <- A[training, testing]
+    A22 <- A[testing, testing]
+    
+    for (j in (1:length(k.vec))) {
+      
+      k <- k.vec[j]
+      spec.res <- DCSBM.spectral.clustering(A11, k)
+      tr.cluster <- spec.res$label_hat
+      tr.theta <- spec.res$theta_hat
+      B.matrix <- DCSBM.prob(tr.cluster, k, A11, tr.theta)$B.matrix
+      
+      
+      te.cluster <- rep(0, length(testing))
+      te.theta <- rep(0,length(testing))
+      affinity <- rep(0,k)
+      ni <- rep(0,k)
+      mi <- rep(0,k)
+      for (t in 1:k) {
+        ni[t] <- sum(tr.theta[tr.cluster==t])
+      }
+      
+      for (s in 1:length(testing)) {
+        loss <- rep(0,k)
+        for (t in 1:k) {
+          mi[t] <-  sum(A12[,s][tr.cluster==t])
+          affinity[t] <- mi[t]/ni[t]
+        }
+        group <- which.max(affinity)
+        te.cluster[s] <- group
+        
+        mean.thetaP <- 0
+        for (t in 1:k){
+          mean.thetaP <- mean.thetaP + ni[t]*B.matrix[t,group]
+        }
+        if (mean.thetaP <= 1e-8) {
+          te.theta[s] <- 0
+        } else {
+          te.theta[s] <- sum(mi) / mean.thetaP
+        }
+      }
+      
+      idx22 <- which(upper.tri(A22), arr.ind = TRUE)
+      ii <- idx22[, 1]
+      jj <- idx22[, 2]
+      
+      A22.vec <- A22[cbind(ii, jj)]
+      
+      prob.vec <- te.theta[ii] *
+        te.theta[jj] *
+        B.matrix[cbind(te.cluster[ii], te.cluster[jj])]
+      
+      prob.vec <- pmin(pmax(prob.vec, 1e-8), 1 - 1e-8)
+      
+      te.negloglike <- -sum(
+        A22.vec * log(prob.vec) +
+          (1 - A22.vec) * log(1 - prob.vec)
+      )
+      
+      te.mse <- sum((A22.vec - prob.vec)^2)
+      loss.f[i, j] <- te.negloglike
+      mse.f[i, j] <- te.mse
+    }
+  }
+  
+  cv.loss <- colMeans(loss.f)
+  cv.mse <- colMeans(mse.f)
+  k.loss <- k.vec[which.min(cv.loss)]
+  k.mse  <- k.vec[which.min(cv.mse)]
+  
+  return(list(
+    k.loss = k.loss,
+    k.mse = k.mse,
+    cv.loss = cv.loss,
+    cv.mse = cv.mse
+  ))
 }
