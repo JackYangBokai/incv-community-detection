@@ -89,6 +89,68 @@ community.sim.sbm <- function(n, n1, eta = 0.3, rho = 0.1, K = 3) {
   list(adjacency = A, membership = c0, conn = B0)
 }
 
+#' Simulate an DCSBM with distance-decaying block probabilities
+#'
+#' Generates an DCSBM where block probabilities decay exponentially with
+#' the distance between community indices: \code{B[k1,k2] = rho * eta^min(|k1-k2|,3)}.
+#' The degree heterogeneity parameter theta is generated from Uniform(1,10) independently,
+#' and normalized for each cluster.
+#'
+#' @param n Total number of nodes.
+#' @param n1 Size of the first (smallest) community.
+#' @param eta Decay parameter for inter-community probabilities (default 0.3).
+#' @param rho Scaling factor for the block probability matrix (default 0.1).
+#' @param K Number of communities (default 3).
+#' @return A list with:
+#'   \item{adjacency}{n x n binary symmetric adjacency matrix.}
+#'   \item{membership}{Integer vector of community labels.}
+#'   \item{conn}{K x K block probability matrix.}
+#'   \item{theta}{Vector of degree-heterogeneity parameter.}
+#' @export
+community.sim.dcsbm <- function(n, n1, eta=0.3, rho = 0.1, K = 3) {
+  
+  B0 <- matrix(0, nrow = K, ncol = K)
+  for (k1 in 1:K) {
+    for (k2 in 1:K) {
+      B0[k1, k2] <- eta^(min(abs(k1-k2),3))
+    }
+  }
+  B0 <- B0 * rho
+  Member_mat <- matrix(0,n,K)
+  
+  size <- rep(0, K)
+  size[1] <- n1 # Set the first community be the one with the smallest size n1
+  i <- 2
+  while (i<K) {
+    size[i] <- floor((n-n1)/(K-1)) # The rest community has size (n-n1)/(k-1)
+    i <- i + 1
+  }
+  size[K] <- n - sum(size) # The last community size is determine by the substraction from n
+  
+  c0 <- sample(rep(1:K,size))
+  for (i in 1:n) {
+    Member_mat[i, c0[i]] <- 1
+  }
+  P0 <- Member_mat %*% B0 %*% t(Member_mat)
+  
+  theta <- runif(n,1,10)
+  for (k in 1:K) {
+    theta[c0 == k] <- theta[c0 == k]/sqrt(sum(theta[c0 == k]^2)) * sqrt(sum(c0 == k))
+  }
+  
+  P0 <- outer(theta, theta) * P0
+  P0[P0 > 1] <- 1
+  
+  A <- matrix(0, nrow = n, ncol = n)
+  for (i in 1:(n-1)) {
+    for (j in (i+1):n) {
+      A[i, j] <- rbinom(n = 1, size = 1, prob = P0[i, j])
+      A[j, i] <- A[i, j]
+    }
+  }
+  return(list(adjacency = A, membership = c0, conn = B0, theta = theta))
+}
+
 #' Generate a fast SBM or DCBM network (sparse)
 #'
 #' Uses parallel edge sampling for speed; returns a sparse adjacency matrix.
